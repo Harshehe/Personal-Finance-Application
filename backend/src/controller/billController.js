@@ -253,11 +253,107 @@ const deleteBill = async (req, res) => {
         });
     }
 };
+const markBillPaid = async (req, res) => {
+    try {
+        const { occurrenceId } = req.params;
+        const { paid_date, payment_method } = req.body;
+        const user_id = req.user.id;
+
+        const result = await pool.query(
+            `UPDATE bill_occurrences o
+             SET
+                status = 'paid',
+                paid_date = COALESCE($1, CURRENT_DATE),
+                payment_method = $2,
+                updated_at = CURRENT_TIMESTAMP
+             FROM bills b
+             WHERE o.id = $3
+             AND o.bill_id = b.id
+             AND b.user_id = $4
+             AND o.status != 'paid'
+             RETURNING
+                o.id,
+                o.bill_id,
+                o.due_date,
+                o.paid_date,
+                o.status,
+                o.payment_method,
+                b.frequency,
+                b.end_date`,
+            [
+                paid_date || null,
+                payment_method || null,
+                occurrenceId,
+                user_id
+            ]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({
+                message: "Bill occurrence not found or already paid"
+            });
+        }
+
+        const occurrence = result.rows[0];
+
+        let nextDueDate = new Date(occurrence.due_date);
+
+        if (occurrence.frequency === "monthly") {
+            nextDueDate.setMonth(nextDueDate.getMonth() + 1);
+        } else if (occurrence.frequency === "yearly") {
+            nextDueDate.setFullYear(
+                nextDueDate.getFullYear() + 1
+            );
+        }
+
+        let nextOccurrence = null;
+
+        if (
+            occurrence.frequency !== "one-time" &&
+            (!occurrence.end_date ||
+                nextDueDate <= new Date(occurrence.end_date))
+        ) {
+            const nextResult = await pool.query(
+                `INSERT INTO bill_occurrences
+                 (bill_id, due_date, status)
+                 VALUES ($1, $2, 'upcoming')
+                 RETURNING id, bill_id, due_date, status`,
+                [
+                    occurrence.bill_id,
+                    nextDueDate.toISOString().split("T")[0]
+                ]
+            );
+
+            nextOccurrence = nextResult.rows[0];
+        }
+
+        res.status(200).json({
+            message: "Bill marked as paid",
+            occurrence: {
+                id: occurrence.id,
+                bill_id: occurrence.bill_id,
+                due_date: occurrence.due_date,
+                paid_date: occurrence.paid_date,
+                status: occurrence.status,
+                payment_method: occurrence.payment_method
+            },
+            nextOccurrence
+        });
+
+    } catch (error) {
+        console.error("Mark Bill Paid Error:", error);
+
+        res.status(500).json({
+            message: "Server error"
+        });
+    }
+};
 
 module.exports = {
     createBill,
     getBillById,
     updateBill,
     deleteBill,
-    getBills
+    getBills,
+    markBillPaid
 };
