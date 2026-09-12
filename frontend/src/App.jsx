@@ -1,26 +1,28 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
+
 import Login from "./pages/login";
 import Register from "./pages/register";
 import ProtectedRoute from "./components/protectedroutes";
+
 import Dashboard from "./pages/Dashboard";
 import Expenses from "./pages/Expenses";
-
-function Expenses() {
-    return <h1>Expenses</h1>;
-}
-
-function Income() {
-    return <h1>Income</h1>;
-}
-
+import Income from "./pages/Income";
+import Bills from "./pages/Bills";
 
 function App() {
     return (
         <BrowserRouter>
             <Routes>
 
-                <Route path="/login" element={<Login />} />
-                <Route path="/register" element={<Register />} />
+                <Route
+                    path="/login"
+                    element={<Login />}
+                />
+
+                <Route
+                    path="/register"
+                    element={<Register />}
+                />
 
                 <Route
                     path="/dashboard"
@@ -49,10 +51,18 @@ function App() {
                     }
                 />
 
+                <Route
+                    path="/bills"
+                    element={
+                        <ProtectedRoute>
+                            <Bills />
+                        </ProtectedRoute>
+                    }
+                />
+
             </Routes>
         </BrowserRouter>
     );
 }
-
 
 export default App;

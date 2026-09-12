@@ -13,6 +13,8 @@ const authMiddleware = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
+console.log("BILL ROUTES LOADED");
+
 router.put(
     "/occurrences/:occurrenceId/pay",
     authMiddleware,

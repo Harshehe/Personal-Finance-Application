@@ -1,5 +1,4 @@
 const pool = require("../config/db");
-const { get } = require("../routes/billRoutes");
 
 const createBill = async (req, res) => {
 
@@ -254,12 +253,18 @@ const deleteBill = async (req, res) => {
     }
 };
 const markBillPaid = async (req, res) => {
+    console.log("🔥 MARK BILL PAID FUNCTION CALLED");
+
+    const client = await pool.connect();
+
     try {
         const { occurrenceId } = req.params;
         const { paid_date, payment_method } = req.body;
         const user_id = req.user.id;
 
-        const result = await pool.query(
+        await client.query("BEGIN");
+
+        const result = await client.query(
             `UPDATE bill_occurrences o
              SET
                 status = 'paid',
@@ -278,6 +283,10 @@ const markBillPaid = async (req, res) => {
                 o.paid_date,
                 o.status,
                 o.payment_method,
+                o.expense_id,
+                b.bill_name,
+                b.amount,
+                b.category,
                 b.frequency,
                 b.end_date`,
             [
@@ -289,6 +298,8 @@ const markBillPaid = async (req, res) => {
         );
 
         if (result.rows.length === 0) {
+            await client.query("ROLLBACK");
+
             return res.status(404).json({
                 message: "Bill occurrence not found or already paid"
             });
@@ -296,10 +307,41 @@ const markBillPaid = async (req, res) => {
 
         const occurrence = result.rows[0];
 
+        const expenseResult = await client.query(
+            `INSERT INTO expenses
+             (user_id, category, amount, description, expense_date, payment_method)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             RETURNING id, category, amount, description,
+                       expense_date, payment_method`,
+            [
+                user_id,
+                occurrence.category,
+                occurrence.amount,
+                occurrence.bill_name,
+                occurrence.paid_date,
+                occurrence.payment_method
+            ]
+        );
+
+        const expense = expenseResult.rows[0];
+
+        await client.query(
+            `UPDATE bill_occurrences
+             SET expense_id = $1,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = $2`,
+            [
+                expense.id,
+                occurrence.id
+            ]
+        );
+
         let nextDueDate = new Date(occurrence.due_date);
 
         if (occurrence.frequency === "monthly") {
-            nextDueDate.setMonth(nextDueDate.getMonth() + 1);
+            nextDueDate.setMonth(
+                nextDueDate.getMonth() + 1
+            );
         } else if (occurrence.frequency === "yearly") {
             nextDueDate.setFullYear(
                 nextDueDate.getFullYear() + 1
@@ -310,10 +352,12 @@ const markBillPaid = async (req, res) => {
 
         if (
             occurrence.frequency !== "one-time" &&
-            (!occurrence.end_date ||
-                nextDueDate <= new Date(occurrence.end_date))
+            (
+                !occurrence.end_date ||
+                nextDueDate <= new Date(occurrence.end_date)
+            )
         ) {
-            const nextResult = await pool.query(
+            const nextResult = await client.query(
                 `INSERT INTO bill_occurrences
                  (bill_id, due_date, status)
                  VALUES ($1, $2, 'upcoming')
@@ -327,6 +371,8 @@ const markBillPaid = async (req, res) => {
             nextOccurrence = nextResult.rows[0];
         }
 
+        await client.query("COMMIT");
+
         res.status(200).json({
             message: "Bill marked as paid",
             occurrence: {
@@ -335,17 +381,25 @@ const markBillPaid = async (req, res) => {
                 due_date: occurrence.due_date,
                 paid_date: occurrence.paid_date,
                 status: occurrence.status,
-                payment_method: occurrence.payment_method
+                payment_method: occurrence.payment_method,
+                expense_id: expense.id
             },
+            expense,
             nextOccurrence
         });
 
     } catch (error) {
+
+        await client.query("ROLLBACK");
+
         console.error("Mark Bill Paid Error:", error);
 
         res.status(500).json({
             message: "Server error"
         });
+
+    } finally {
+        client.release();
     }
 };
 
